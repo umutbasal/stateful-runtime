@@ -35,7 +35,12 @@ services:
     depends_on:
       redpanda:
         condition: service_healthy
-    command: ["/bin/sh", "-c", "rpk topic create tweet-events --if-not-exists --brokers redpanda:9092"]
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_TOPIC: tweet-events
+    volumes:
+      - ./scripts/kafka_init.sh:/scripts/kafka_init.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/kafka_init.sh"]
     restart: "no"
 
   runtime:
@@ -70,4 +75,4 @@ services:
       INGEST_INTERVAL_SECONDS: "0.3"
     volumes:
       - ./scripts/fake_ingest.sh:/scripts/fake_ingest.sh:ro
-    command: ["/bin/sh", "/scripts/fake_ingest.sh"]
+    entrypoint: ["/bin/sh", "/scripts/fake_ingest.sh"]

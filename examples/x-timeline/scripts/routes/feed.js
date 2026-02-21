@@ -31,8 +31,19 @@ const route = {
       limit: parseLimit(request.query.limit),
     };
 
-    const raw = Deno.core.ops.op_execute_query("get_feed", JSON.stringify(params));
-    const posts = raw ? JSON.parse(raw) : [];
+    let posts = [];
+    try {
+      const raw = Deno.core.ops.op_execute_query("get_feed", JSON.stringify(params));
+      posts = raw ? JSON.parse(raw) : [];
+    } catch (_err) {
+      const fallbackRaw = Deno.core.ops.op_collection_multi_scan(
+        "user_timeline",
+        JSON.stringify(followingIds),
+        params.limit,
+      );
+      const fallbackPosts = fallbackRaw ? JSON.parse(fallbackRaw) : [];
+      posts = Array.isArray(fallbackPosts) ? fallbackPosts.slice(0, params.limit) : [];
+    }
 
     return {
       status: 200,

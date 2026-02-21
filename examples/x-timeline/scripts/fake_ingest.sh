@@ -10,6 +10,12 @@ until rpk cluster info --brokers "${BROKERS}" >/dev/null 2>&1; do
   sleep 1
 done
 
+echo "ensuring topic ${TOPIC} exists..."
+until rpk topic describe "${TOPIC}" --brokers "${BROKERS}" >/dev/null 2>&1; do
+  rpk topic create "${TOPIC}" --brokers "${BROKERS}" >/dev/null 2>&1 || true
+  sleep 1
+done
+
 echo "starting fake x-timeline ingestion into topic ${TOPIC}"
 
 i=1
@@ -24,7 +30,9 @@ while true; do
 EOF
 )"
 
-  printf '%s\n' "${create_payload}" | rpk topic produce "${TOPIC}" --brokers "${BROKERS}" >/dev/null
+  until printf '%s\n' "${create_payload}" | rpk topic produce "${TOPIC}" --brokers "${BROKERS}" >/dev/null 2>&1; do
+    sleep 1
+  done
 
   if [ $((i % 15)) -eq 0 ]; then
     delete_idx=$((i - 10))
@@ -34,7 +42,9 @@ EOF
 {"event":"delete","id":"post-${delete_idx}","author_id":"user-${delete_author_idx}","created_at":"${created_at_ms}"}
 EOF
 )"
-      printf '%s\n' "${delete_payload}" | rpk topic produce "${TOPIC}" --brokers "${BROKERS}" >/dev/null
+      until printf '%s\n' "${delete_payload}" | rpk topic produce "${TOPIC}" --brokers "${BROKERS}" >/dev/null 2>&1; do
+        sleep 1
+      done
     fi
   fi
 

@@ -6,13 +6,13 @@ FOLLOWING ?= user-1,user-2,user-3,user-4,user-5
 .PHONY: up down logs ps wait-ready feed timeline metrics smoke test
 
 up:
-	$(COMPOSE) up -d --build
+	$(COMPOSE) up -d --build --force-recreate
 
 down:
 	$(COMPOSE) down -v --remove-orphans
 
 logs:
-	$(COMPOSE) logs -f redpanda runtime fake-ingest
+	$(COMPOSE) logs -f redpanda kafka-init runtime fake-ingest
 
 ps:
 	$(COMPOSE) ps
