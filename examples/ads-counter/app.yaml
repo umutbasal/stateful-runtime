@@ -1,0 +1,47 @@
+app:
+  name: ads-counter
+  version: 0.1.0
+
+limits:
+  max_concurrent_requests: 1024
+  max_request_bytes: 1048576
+  max_response_bytes: 1048576
+  rate_limits:
+    query_rps: 10000
+    ingest_rps: 20000
+  js:
+    pool_size: 4
+    memory_limit_bytes: 134217728
+    max_cpu_ms_per_request: 5
+  store:
+    max_bytes: 1073741824
+    max_entity_bytes: 32768
+    tombstone_ttl_seconds: 3600
+    soft_limit_percent: 85
+
+formats:
+  kafka:
+    encoding: json
+  http:
+    request: json
+    response: json
+
+ingestion:
+  - type: kafka
+    group_id: ads-counter-runtime
+    brokers:
+      - localhost:9092
+    topics:
+      - name: ad-events
+        entity: campaign_stats
+        event_type: campaign_event
+
+endpoints:
+  - name: campaign_stats
+    method: GET
+    path: /v1/campaigns/:id/stats
+    handler: scripts/routes/campaign_stats.js
+
+admin:
+  enable_grpc: false
+  enable_execute: false

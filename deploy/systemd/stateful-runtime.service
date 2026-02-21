@@ -1,0 +1,19 @@
+[Unit]
+Description=Stateful Edge Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stateful-runtime
+Group=stateful-runtime
+WorkingDirectory=/opt/stateful-runtime
+EnvironmentFile=/etc/stateful-runtime/runtime.env
+ExecStart=/opt/stateful-runtime/stateful-runtime --bundle-path ${BUNDLE_PATH} --bind ${BIND} --metrics-bind ${METRICS_BIND}
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

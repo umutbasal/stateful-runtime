@@ -1,0 +1,28 @@
+entities:
+  - name: post
+    primary_key: id
+    fields:
+      - name: id
+        type: string
+        required: true
+      - name: author_id
+        type: string
+        required: true
+      - name: body
+        type: string
+      - name: created_at
+        type: string
+      - name: conversation_id
+        type: string
+    indexes:
+      - name: by_author
+        field: author_id
+        type: hash
+      - name: by_created_at
+        field: created_at
+        type: sorted
+      - name: by_conversation
+        field: conversation_id
+        type: hash
+    retention:
+      ttl_seconds: 604800

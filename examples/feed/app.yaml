@@ -1,0 +1,51 @@
+app:
+  name: social-feed
+  version: 0.1.0
+
+limits:
+  max_concurrent_requests: 1500
+  max_request_bytes: 1048576
+  max_response_bytes: 1048576
+  rate_limits:
+    query_rps: 15000
+    ingest_rps: 25000
+  js:
+    pool_size: 6
+    memory_limit_bytes: 134217728
+    max_cpu_ms_per_request: 5
+  store:
+    max_bytes: 2147483648
+    max_entity_bytes: 65536
+    tombstone_ttl_seconds: 3600
+    soft_limit_percent: 85
+
+formats:
+  kafka:
+    encoding: json
+  http:
+    request: json
+    response: json
+
+ingestion:
+  - type: kafka
+    group_id: social-feed-runtime
+    brokers:
+      - localhost:9092
+    topics:
+      - name: post-events
+        entity: post
+        event_type: post_event
+
+endpoints:
+  - name: feed
+    method: GET
+    path: /v1/feed
+    handler: scripts/routes/feed.js
+  - name: get_post
+    method: GET
+    path: /v1/post/:id
+    handler: scripts/routes/get_post.js
+
+admin:
+  enable_grpc: false
+  enable_execute: false
