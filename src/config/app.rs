@@ -31,6 +31,12 @@ pub struct AppConfig {
     #[serde(default)]
     pub endpoints: Vec<EndpointConfig>,
     #[serde(default)]
+    pub queries: Vec<QueryConfig>,
+    #[serde(default)]
+    pub crons: Vec<CronConfig>,
+    #[serde(default)]
+    pub lifecycle: Option<LifecycleConfig>,
+    #[serde(default)]
     pub admin: AdminConfig,
 }
 
@@ -161,6 +167,27 @@ pub struct EndpointConfig {
     pub handler: String,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryConfig {
+    pub name: String,
+    pub handler: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronConfig {
+    pub name: String,
+    pub interval_seconds: u64,
+    pub handler: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LifecycleConfig {
+    #[serde(default)]
+    pub on_init: Option<String>,
+    #[serde(default)]
+    pub on_shutdown: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -12,6 +12,7 @@ use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use stateful_runtime::config::load_bundle;
+use stateful_runtime::cron;
 use stateful_runtime::http::health::HealthState;
 use stateful_runtime::http::{admin, build_router, RuntimeState};
 use stateful_runtime::ingestion;
@@ -47,6 +48,7 @@ async fn main() -> Result<()> {
         config.app.limits.store.max_bytes,
         config.app.limits.store.max_entity_bytes,
     ));
+    let collection_store = store.collection_store();
     health.set_store_ready(true);
 
     let metrics = Arc::new(RuntimeMetrics::new()?);
@@ -62,12 +64,17 @@ async fn main() -> Result<()> {
         ),
     ));
 
-    let js_pool = Arc::new(JsRuntimePool::new(&config, store.clone())?);
+    let js_pool = Arc::new(JsRuntimePool::new(
+        &config,
+        store.clone(),
+        collection_store.clone(),
+    )?);
     health.set_scripts_loaded(true);
 
     let (sweep_tx, mut sweep_rx) = mpsc::unbounded_channel();
     let retention_handle = spawn_retention_sweeper(
         store.clone(),
+        collection_store.clone(),
         Duration::from_secs(1),
         config.app.limits.store.tombstone_ttl_seconds,
         Some(sweep_tx),
@@ -79,6 +86,14 @@ async fn main() -> Result<()> {
             retention_metrics.observe_retention_sweep(sweep);
         }
     });
+
+    let init_ops = js_pool
+        .execute_lifecycle("on_init")
+        .await
+        .context("failed executing on_init lifecycle hook")?;
+    store
+        .apply_ops(&init_ops)
+        .context("failed applying on_init lifecycle ops")?;
 
     let ingestion_handle = ingestion::start(
         config.clone(),
@@ -101,6 +116,8 @@ async fn main() -> Result<()> {
     } else {
         health.set_kafka_ready(true);
     }
+
+    let cron_handle = cron::spawn_cron_tasks(config.clone(), js_pool.clone(), store.clone());
 
     let state = RuntimeState {
         config: config.clone(),
@@ -162,6 +179,17 @@ async fn main() -> Result<()> {
 
     let _ = shutdown_tx.send(true);
 
+    let shutdown_ops = js_pool
+        .execute_lifecycle("on_shutdown")
+        .await
+        .context("failed executing on_shutdown lifecycle hook")?;
+    store
+        .apply_ops(&shutdown_ops)
+        .context("failed applying on_shutdown lifecycle ops")?;
+
+    if let Some(handle) = cron_handle {
+        handle.stop().await;
+    }
     if let Some(handle) = ingestion_handle {
         handle.stop().await;
     }

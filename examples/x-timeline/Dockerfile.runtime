@@ -1,0 +1,25 @@
+FROM rust:1.85-bookworm AS builder
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY examples ./examples
+
+RUN cargo build --release --bin stateful-runtime
+
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/stateful-runtime /usr/local/bin/stateful-runtime
+COPY --from=builder /app/examples /app/examples
+
+EXPOSE 8080 9090
+
+ENTRYPOINT ["stateful-runtime"]
+CMD ["--bundle-path", "/app/examples/x-timeline", "--bind", "0.0.0.0:8080", "--metrics-bind", "0.0.0.0:9090"]

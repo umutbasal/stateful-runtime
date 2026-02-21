@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityType {
+    #[default]
+    Record,
+    Collection,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SchemaConfig {
     #[serde(default)]
@@ -11,9 +19,17 @@ pub struct EntitySchema {
     pub name: String,
     pub primary_key: String,
     #[serde(default)]
+    pub entity_type: EntityType,
+    #[serde(default)]
     pub fields: Vec<FieldSchema>,
     #[serde(default)]
     pub indexes: Vec<IndexSchema>,
+    #[serde(default)]
+    pub partition_key: Option<String>,
+    #[serde(default)]
+    pub order_by: Option<String>,
+    #[serde(default)]
+    pub max_per_partition: Option<usize>,
     #[serde(default)]
     pub retention: Option<RetentionPolicy>,
 }

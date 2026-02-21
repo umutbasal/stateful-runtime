@@ -21,6 +21,7 @@ pub struct StoreOp {
     pub op: StoreOpKind,
     pub entity_type: String,
     pub key: String,
+    pub item_id: Option<String>,
     pub value: Option<Value>,
 }
 
@@ -28,4 +29,6 @@ pub struct StoreOp {
 pub enum StoreOpKind {
     Upsert,
     Delete,
+    Push,
+    RemoveItem,
 }

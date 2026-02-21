@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
@@ -6,16 +7,18 @@ use serde_json::Value;
 
 use crate::js::ops;
 use crate::js::{IngestContext, JsRouteRequest, JsRouteResponse};
-use crate::store::{Store, StoreOp, StoreOpKind};
+use crate::store::{CollectionStore, Store, StoreOp, StoreOpKind};
 
 pub fn execute_route_handler(
     store: Arc<Store>,
+    collection_store: Arc<CollectionStore>,
+    query_scripts: Arc<HashMap<String, (String, String)>>,
     script_name: &str,
     script_source: &str,
     request: &JsRouteRequest,
     memory_limit_bytes: usize,
 ) -> Result<JsRouteResponse> {
-    let mut runtime = new_runtime(store, memory_limit_bytes);
+    let mut runtime = new_runtime(store, collection_store, query_scripts, memory_limit_bytes);
     bootstrap_runtime(&mut runtime)?;
     load_script(&mut runtime, script_name, script_source)?;
 
@@ -46,6 +49,8 @@ pub fn execute_route_handler(
 
 pub fn execute_ingest_handler(
     store: Arc<Store>,
+    collection_store: Arc<CollectionStore>,
+    query_scripts: Arc<HashMap<String, (String, String)>>,
     script_name: &str,
     script_source: &str,
     event_type: &str,
@@ -53,7 +58,7 @@ pub fn execute_ingest_handler(
     context: &IngestContext,
     memory_limit_bytes: usize,
 ) -> Result<Vec<StoreOp>> {
-    let mut runtime = new_runtime(store, memory_limit_bytes);
+    let mut runtime = new_runtime(store, collection_store, query_scripts, memory_limit_bytes);
     bootstrap_runtime(&mut runtime)?;
     load_script(&mut runtime, script_name, script_source)?;
 
@@ -87,10 +92,129 @@ pub fn execute_ingest_handler(
     parse_store_ops(result_value)
 }
 
-fn new_runtime(store: Arc<Store>, memory_limit_bytes: usize) -> JsRuntime {
+pub fn execute_cron_handler(
+    store: Arc<Store>,
+    collection_store: Arc<CollectionStore>,
+    query_scripts: Arc<HashMap<String, (String, String)>>,
+    script_name: &str,
+    script_source: &str,
+    cron_name: &str,
+    memory_limit_bytes: usize,
+) -> Result<Vec<StoreOp>> {
+    let mut runtime = new_runtime(store, collection_store, query_scripts, memory_limit_bytes);
+    bootstrap_runtime(&mut runtime)?;
+    load_script(&mut runtime, script_name, script_source)?;
+
+    let cron_name_json = serde_json::to_string(cron_name)?;
+    let invocation = format!(
+        r#"
+(() => {{
+  if (typeof on_cron !== "function") {{
+    globalThis.__stateful.lastResult = [];
+    return;
+  }}
+  const result = on_cron({cron_name_json});
+  globalThis.__stateful.lastResult = Array.isArray(result) ? result : [];
+}})();
+"#
+    );
+
+    runtime
+        .execute_script("<cron_invoke>", invocation)
+        .context("failed to execute cron handler")?;
+    let result_handle = runtime
+        .execute_script("<cron_result>", "globalThis.__stateful.lastResult")
+        .context("failed to read cron handler result")?;
+    let result_value = to_json_value(&mut runtime, result_handle)?;
+    parse_store_ops(result_value)
+}
+
+pub fn execute_query_handler(
+    store: Arc<Store>,
+    collection_store: Arc<CollectionStore>,
+    query_scripts: Arc<HashMap<String, (String, String)>>,
+    script_name: &str,
+    script_source: &str,
+    params: &Value,
+    memory_limit_bytes: usize,
+) -> Result<Value> {
+    let mut runtime = new_runtime(store, collection_store, query_scripts, memory_limit_bytes);
+    bootstrap_runtime(&mut runtime)?;
+    load_script(&mut runtime, script_name, script_source)?;
+
+    let params_json = serde_json::to_string(params)?;
+    let invocation = format!(
+        r#"
+(() => {{
+  if (typeof on_query !== "function") {{
+    throw new Error("query handler not registered");
+  }}
+  globalThis.__stateful.lastResult = on_query({params_json});
+}})();
+"#
+    );
+
+    runtime
+        .execute_script("<query_invoke>", invocation)
+        .context("failed to execute query handler")?;
+    let result_handle = runtime
+        .execute_script("<query_result>", "globalThis.__stateful.lastResult")
+        .context("failed to read query handler result")?;
+    to_json_value(&mut runtime, result_handle)
+}
+
+pub fn execute_lifecycle_handler(
+    store: Arc<Store>,
+    collection_store: Arc<CollectionStore>,
+    query_scripts: Arc<HashMap<String, (String, String)>>,
+    script_name: &str,
+    script_source: &str,
+    hook_name: &str,
+    memory_limit_bytes: usize,
+) -> Result<Vec<StoreOp>> {
+    let mut runtime = new_runtime(store, collection_store, query_scripts, memory_limit_bytes);
+    bootstrap_runtime(&mut runtime)?;
+    load_script(&mut runtime, script_name, script_source)?;
+
+    let hook_name_json = serde_json::to_string(hook_name)?;
+    let invocation = format!(
+        r#"
+(() => {{
+  const hook = globalThis[{hook_name_json}];
+  if (typeof hook !== "function") {{
+    globalThis.__stateful.lastResult = [];
+    return;
+  }}
+  const result = hook();
+  globalThis.__stateful.lastResult = Array.isArray(result) ? result : [];
+}})();
+"#
+    );
+
+    runtime
+        .execute_script("<lifecycle_invoke>", invocation)
+        .context("failed to execute lifecycle handler")?;
+    let result_handle = runtime
+        .execute_script("<lifecycle_result>", "globalThis.__stateful.lastResult")
+        .context("failed to read lifecycle handler result")?;
+    let result_value = to_json_value(&mut runtime, result_handle)?;
+    parse_store_ops(result_value)
+}
+
+fn new_runtime(
+    store: Arc<Store>,
+    collection_store: Arc<CollectionStore>,
+    query_scripts: Arc<HashMap<String, (String, String)>>,
+    memory_limit_bytes: usize,
+) -> JsRuntime {
     let create_params = v8::Isolate::create_params().heap_limits(0, memory_limit_bytes);
     JsRuntime::new(RuntimeOptions {
-        extensions: vec![ops::build_extension(store)],
+        extensions: vec![ops::build_extension(
+            store,
+            collection_store,
+            query_scripts,
+            memory_limit_bytes,
+        )],
         create_params: Some(create_params),
         ..Default::default()
     })
@@ -141,6 +265,10 @@ fn to_json_value(runtime: &mut JsRuntime, value: v8::Global<v8::Value>) -> Resul
 }
 
 fn parse_store_ops(value: Value) -> Result<Vec<StoreOp>> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
     let entries = value
         .as_array()
         .ok_or_else(|| anyhow!("on_ingest must return an array of ops"))?;
@@ -167,14 +295,22 @@ fn parse_store_ops(value: Value) -> Result<Vec<StoreOp>> {
         let op_kind = match op {
             "upsert" => StoreOpKind::Upsert,
             "delete" => StoreOpKind::Delete,
+            "push" => StoreOpKind::Push,
+            "remove_item" => StoreOpKind::RemoveItem,
             other => return Err(anyhow!("unsupported store op '{other}'")),
         };
+        let item_id = object
+            .get("item_id")
+            .or_else(|| object.get("itemId"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
         let value = object.get("value").cloned();
 
         ops.push(StoreOp {
             op: op_kind,
             entity_type: entity_type.to_string(),
             key: key.to_string(),
+            item_id,
             value,
         });
     }

@@ -123,6 +123,78 @@ impl LoadedConfig {
             }
         }
 
+        let mut query_names = HashSet::new();
+        for query in &self.app.queries {
+            if query.name.trim().is_empty() {
+                bail!("query name cannot be empty");
+            }
+            if !query_names.insert(query.name.clone()) {
+                bail!("duplicate query name '{}'", query.name);
+            }
+            if query.handler.trim().is_empty() {
+                bail!("query '{}' has an empty handler", query.name);
+            }
+            let handler_path = self.bundle_path.join(&query.handler);
+            if !handler_path.is_file() {
+                bail!(
+                    "query '{}' handler is missing: {}",
+                    query.name,
+                    handler_path.to_string_lossy()
+                );
+            }
+        }
+
+        let mut cron_names = HashSet::new();
+        for cron in &self.app.crons {
+            if cron.name.trim().is_empty() {
+                bail!("cron name cannot be empty");
+            }
+            if !cron_names.insert(cron.name.clone()) {
+                bail!("duplicate cron name '{}'", cron.name);
+            }
+            if cron.interval_seconds == 0 {
+                bail!("cron '{}' interval_seconds must be > 0", cron.name);
+            }
+            if cron.handler.trim().is_empty() {
+                bail!("cron '{}' has an empty handler", cron.name);
+            }
+            let handler_path = self.bundle_path.join(&cron.handler);
+            if !handler_path.is_file() {
+                bail!(
+                    "cron '{}' handler is missing: {}",
+                    cron.name,
+                    handler_path.to_string_lossy()
+                );
+            }
+        }
+
+        if let Some(lifecycle) = &self.app.lifecycle {
+            if let Some(on_init) = &lifecycle.on_init {
+                if on_init.trim().is_empty() {
+                    bail!("lifecycle.on_init must not be empty when provided");
+                }
+                let init_path = self.bundle_path.join(on_init);
+                if !init_path.is_file() {
+                    bail!(
+                        "lifecycle on_init script is missing: {}",
+                        init_path.to_string_lossy()
+                    );
+                }
+            }
+            if let Some(on_shutdown) = &lifecycle.on_shutdown {
+                if on_shutdown.trim().is_empty() {
+                    bail!("lifecycle.on_shutdown must not be empty when provided");
+                }
+                let shutdown_path = self.bundle_path.join(on_shutdown);
+                if !shutdown_path.is_file() {
+                    bail!(
+                        "lifecycle on_shutdown script is missing: {}",
+                        shutdown_path.to_string_lossy()
+                    );
+                }
+            }
+        }
+
         for source in &self.app.ingestion {
             if source.source_type != "kafka" && source.source_type != "http" {
                 bail!(
@@ -168,6 +240,51 @@ impl LoadedConfig {
                 }
             }
             field_names.insert(entity.primary_key.clone());
+
+            if entity.entity_type == EntityType::Collection {
+                let Some(partition_key) = entity.partition_key.as_ref() else {
+                    bail!(
+                        "collection entity '{}' must define partition_key",
+                        entity.name
+                    );
+                };
+                if partition_key.trim().is_empty() {
+                    bail!(
+                        "collection entity '{}' partition_key cannot be empty",
+                        entity.name
+                    );
+                }
+                if !field_names.contains(partition_key) {
+                    bail!(
+                        "collection entity '{}' partition_key '{}' references unknown field",
+                        entity.name,
+                        partition_key
+                    );
+                }
+                if let Some(order_by) = &entity.order_by {
+                    if order_by.trim().is_empty() {
+                        bail!(
+                            "collection entity '{}' order_by cannot be empty",
+                            entity.name
+                        );
+                    }
+                    if !field_names.contains(order_by) {
+                        bail!(
+                            "collection entity '{}' order_by '{}' references unknown field",
+                            entity.name,
+                            order_by
+                        );
+                    }
+                }
+                if let Some(max_per_partition) = entity.max_per_partition {
+                    if max_per_partition == 0 {
+                        bail!(
+                            "collection entity '{}' max_per_partition must be > 0",
+                            entity.name
+                        );
+                    }
+                }
+            }
 
             let mut index_names = HashSet::new();
             for index in &entity.indexes {

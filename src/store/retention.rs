@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
-use crate::store::{now_millis, RetentionSweepResult, Store};
+use crate::store::{now_millis, CollectionStore, RetentionSweepResult, Store};
 
 pub struct RetentionTaskHandle {
     stop_tx: watch::Sender<bool>,
@@ -21,6 +21,7 @@ impl RetentionTaskHandle {
 
 pub fn spawn_retention_sweeper(
     store: Arc<Store>,
+    collection_store: Arc<CollectionStore>,
     interval: Duration,
     tombstone_ttl_seconds: u64,
     sweep_events: Option<mpsc::UnboundedSender<RetentionSweepResult>>,
@@ -33,7 +34,10 @@ pub fn spawn_retention_sweeper(
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    let result = store.sweep_retention(now_millis(), tombstone_ttl_seconds);
+                    let mut result = store.sweep_retention(now_millis(), tombstone_ttl_seconds);
+                    result.trimmed_collection_items = result
+                        .trimmed_collection_items
+                        .saturating_add(collection_store.trim_all_expired());
                     if let Some(events) = &sweep_events {
                         let _ = events.send(result);
                     }

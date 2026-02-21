@@ -1,0 +1,51 @@
+entities:
+  - name: post
+    primary_key: id
+    fields:
+      - name: id
+        type: string
+        required: true
+      - name: author_id
+        type: string
+        required: true
+      - name: body
+        type: string
+      - name: created_at
+        type: string
+      - name: conversation_id
+        type: string
+      - name: is_retweet
+        type: boolean
+      - name: is_reply
+        type: boolean
+      - name: source_user_id
+        type: string
+      - name: source_post_id
+        type: string
+    indexes:
+      - name: by_author
+        field: author_id
+        type: hash
+      - name: by_created_at
+        field: created_at
+        type: sorted
+    retention:
+      ttl_seconds: 604800
+
+  - name: user_timeline
+    primary_key: id
+    entity_type: collection
+    partition_key: author_id
+    order_by: created_at
+    max_per_partition: 500
+    fields:
+      - name: id
+        type: string
+        required: true
+      - name: author_id
+        type: string
+        required: true
+      - name: created_at
+        type: string
+    retention:
+      ttl_seconds: 172800

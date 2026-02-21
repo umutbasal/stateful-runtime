@@ -1,3 +1,4 @@
+mod collection;
 mod entity;
 mod index;
 pub mod retention;
@@ -7,7 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+pub use collection::{CollectionStore, CollectionStoreError};
 use dashmap::{DashMap, DashSet};
 pub use entity::{EntityRecord, StoreOp, StoreOpKind, Tombstone};
 pub use index::IndexMeta;
@@ -16,7 +18,7 @@ use parking_lot::RwLock;
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::config::{EntitySchema, IndexKind, SchemaConfig};
+use crate::config::{EntitySchema, EntityType, IndexKind, SchemaConfig};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -32,6 +34,7 @@ pub enum StoreError {
 pub struct RetentionSweepResult {
     pub evicted_entities: usize,
     pub cleaned_tombstones: usize,
+    pub trimmed_collection_items: usize,
 }
 
 pub struct Store {
@@ -43,6 +46,7 @@ pub struct Store {
     memory_bytes: AtomicUsize,
     max_bytes: usize,
     max_entity_bytes: usize,
+    collection_store: Arc<CollectionStore>,
 }
 
 impl Store {
@@ -51,8 +55,13 @@ impl Store {
         let index_state = IndexState::default();
         let mut entity_defs = HashMap::new();
         let mut index_defs = HashMap::new();
+        let collection_store = Arc::new(CollectionStore::new(schema));
 
         for entity in &schema.entities {
+            if entity.entity_type == EntityType::Collection {
+                continue;
+            }
+
             entities.insert(entity.name.clone(), DashMap::new());
             index_state.ensure_entity_indexes(entity);
             entity_defs.insert(entity.name.clone(), entity.clone());
@@ -79,6 +88,7 @@ impl Store {
             memory_bytes: AtomicUsize::new(0),
             max_bytes,
             max_entity_bytes,
+            collection_store,
         }
     }
 
@@ -93,9 +103,42 @@ impl Store {
                 StoreOpKind::Delete => {
                     self.delete(&op.entity_type, &op.key)?;
                 }
+                StoreOpKind::Push => {
+                    let value = op
+                        .value
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("push op requires a value payload"))?
+                        .clone();
+                    let item_id = Self::extract_collection_item_id(op, &value)
+                        .ok_or_else(|| anyhow!("push op requires item_id or value.id"))?;
+                    self.collection_store
+                        .push(&op.entity_type, &op.key, &item_id, value)?;
+                }
+                StoreOpKind::RemoveItem => {
+                    let item_id = op
+                        .item_id
+                        .as_deref()
+                        .or_else(|| {
+                            op.value.as_ref().and_then(|value| {
+                                value.get("id").and_then(serde_json::Value::as_str)
+                            })
+                        })
+                        .ok_or_else(|| anyhow!("remove_item op requires item_id"))?;
+                    let _ = self
+                        .collection_store
+                        .remove(&op.entity_type, &op.key, item_id)?;
+                }
             }
         }
         Ok(())
+    }
+
+    pub fn collection_store(&self) -> Arc<CollectionStore> {
+        Arc::clone(&self.collection_store)
+    }
+
+    pub fn snapshot_collection_sizes(&self) -> HashMap<String, usize> {
+        self.collection_store.snapshot_collection_sizes()
     }
 
     pub fn upsert(&self, entity_type: &str, key: &str, value: Value) -> Result<(), StoreError> {
@@ -335,6 +378,7 @@ impl Store {
         RetentionSweepResult {
             evicted_entities: expired.len(),
             cleaned_tombstones: tombstones_to_remove.len(),
+            trimmed_collection_items: 0,
         }
     }
 
@@ -368,6 +412,23 @@ impl Store {
             .iter()
             .map(|entry| entry.value().clone())
             .collect()
+    }
+
+    fn extract_collection_item_id(op: &StoreOp, value: &Value) -> Option<String> {
+        if let Some(item_id) = &op.item_id {
+            if !item_id.is_empty() {
+                return Some(item_id.clone());
+            }
+        }
+        if let Some(item_id) = value.get("id").and_then(Value::as_str) {
+            if !item_id.is_empty() {
+                return Some(item_id.to_string());
+            }
+        }
+        if let Some(item_id) = value.get("post_id").and_then(Value::as_i64) {
+            return Some(item_id.to_string());
+        }
+        None
     }
 
     fn add_to_indexes(&self, entity_type: &str, key: &str, value: &Value) {
