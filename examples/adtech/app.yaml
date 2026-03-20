@@ -1,0 +1,50 @@
+app:
+  name: adtech-auction
+  version: 0.1.0
+
+limits:
+  max_concurrent_requests: 1024
+  max_request_bytes: 1048576
+  max_response_bytes: 1048576
+  rate_limits:
+    query_rps: 10000
+    ingest_rps: 20000
+  js:
+    pool_size: 4
+    memory_limit_bytes: 134217728
+    max_cpu_ms_per_request: 10
+  store:
+    max_bytes: 1073741824
+    max_entity_bytes: 32768
+    tombstone_ttl_seconds: 3600
+    soft_limit_percent: 85
+
+formats:
+  kafka:
+    encoding: json
+  http:
+    request: json
+    response: json
+
+ingestion:
+  - type: kafka
+    group_id: adtech-runtime
+    brokers:
+      - localhost:9092
+    topics:
+      - name: campaign-events
+        entity: campaign
+        event_type: campaign_update
+
+endpoints:
+  - name: ad_request
+    method: POST
+    path: /v1/ad-request
+    handler: scripts/routes/ad_request.js
+
+lifecycle:
+  on_init: scripts/lifecycle.js
+
+admin:
+  enable_grpc: false
+  enable_execute: false
