@@ -1,0 +1,35 @@
+entities:
+  - name: campaign
+    primary_key: id
+    fields:
+      - name: id
+        type: string
+        required: true
+      - name: bid
+        type: number
+        required: true
+      - name: target_age_min
+        type: number
+      - name: target_age_max
+        type: number
+      - name: target_gender
+        type: string
+      - name: target_location
+        type: string
+      - name: status
+        type: string
+        required: true
+      - name: updated_at
+        type: string
+    indexes:
+      - name: by_status
+        field: status
+        type: hash
+      - name: by_gender
+        field: target_gender
+        type: hash
+      - name: by_location
+        field: target_location
+        type: hash
+    retention:
+      ttl_seconds: 86400
